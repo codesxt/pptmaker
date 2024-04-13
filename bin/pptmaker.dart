@@ -1,16 +1,19 @@
 import 'dart:convert';
 import 'dart:io';
 
+import 'package:hive/hive.dart';
 import 'package:args/args.dart';
 import 'package:dart_pptx/dart_pptx.dart';
 import 'package:google_generative_ai/google_generative_ai.dart';
 import 'package:prompts/prompts.dart' as prompts;
+import 'package:path/path.dart' as p;
 
 import '../src/helpers/markdown.dart';
 import '../src/helpers/slides.dart';
 
 String apiKey = '';
 String appName = 'pptmaker';
+const String apiKeyFieldName = 'geminiApiKey';
 
 ArgParser buildParser() {
   return ArgParser()
@@ -48,45 +51,47 @@ String getHome() {
   return home;
 }
 
+String getUserHome() {
+  Map<String, String> envVars = Platform.environment;
+  if (Platform.isWindows) {
+    return envVars['USERPROFILE']!;
+  } else if (Platform.isLinux || Platform.isMacOS) {
+    return envVars['HOME']!;
+  } else {
+    final homeDir = p.join(Directory.current.path, 'home');
+    return homeDir;
+  }
+}
+
 void main(List<String> arguments) async {
   final ArgParser argParser = buildParser();
-  String homeDir = getHome();
-  File settingsFile = File('$homeDir/.$appName.json');
-  if (!settingsFile.existsSync()) {
-    settingsFile = await settingsFile.create();
-    settingsFile.writeAsStringSync(
-      '{ "apikey": "" }',
-      flush: true,
-    );
-  }
+  String homeDir = getUserHome();
+  String settingsFilePath = '$homeDir/.$appName';
+  Hive.init(settingsFilePath);
+  var settingsBox = await Hive.openBox('settings');
 
-  String settingsFileContents = await settingsFile.readAsString();
-  Map settings =
-      settingsFileContents.isEmpty ? {} : jsonDecode(settingsFileContents);
-
-  String? apiKey = settings['apikey'];
+  String? apiKey = settingsBox.get(apiKeyFieldName);
   try {
     final ArgResults results = argParser.parse(arguments);
     // Process the parsed arguments.
     if (results.wasParsed('config')) {
       print('Add a key for the Gemini API.');
       print(
-          'You can get one in the following URL: https://makersuite.google.com/app/apikey?hl=es-419');
+        'You can get one in the following URL: '
+        'https://makersuite.google.com/app/apikey?hl=es-419',
+      );
       String apiKey = prompts.get(
         'Gemini API Key:',
         conceal: true,
       );
       if (apiKey.isNotEmpty) {
         // Guardar apikey
-        settingsFile.writeAsStringSync('{ "apikey": "$apiKey" }');
+        settingsBox.put(apiKeyFieldName, apiKey);
       }
       return;
     }
     if (results.wasParsed('clear-config')) {
-      settingsFile.writeAsStringSync(
-        '{ "apikey": "" }',
-        flush: true,
-      );
+      settingsBox.delete(apiKeyFieldName);
       return;
     }
   } catch (e) {
@@ -106,6 +111,10 @@ void main(List<String> arguments) async {
     'File name',
     defaultsTo: 'my_presentation.pptx',
   );
+  if (!fileName.endsWith('.pptx')) {
+    fileName += '.pptx';
+  }
+
   String author = prompts.get(
     'Author name',
     defaultsTo: 'My Name',
@@ -156,12 +165,17 @@ void main(List<String> arguments) async {
   );
   // print(titlesResponse.text);
 
-  String sectionTitles = titlesResponse.text!;
+  String sectionTitlesText = titlesResponse.text!;
+  List<String> sectionTitles = sectionTitlesText.split('\n');
 
   PowerPoint pres = PowerPoint();
 
-  for (var title in sectionTitles.split('\n')) {
-    print('>> Expanding on section: $title');
+  print('> ${sectionTitles.length} sections will be generated.');
+
+  int sectionCounter = 0;
+  for (var title in sectionTitles) {
+    String counter = '[${sectionCounter + 1} / ${sectionTitles.length + 1}]';
+    print('>> $counter Expanding on section: $title');
 
     final String prompt = 'Expand on section: $title.';
 
@@ -193,6 +207,7 @@ void main(List<String> arguments) async {
     for (var item in items) {
       SlidesHelper.addJsonToSlide(pres, item);
     }
+    sectionCounter++;
   }
 
   final bytes = await pres.save();

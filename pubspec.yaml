@@ -1,6 +1,6 @@
 name: pptmaker
 description: A sample command-line application with basic argument parsing.
-version: 0.0.1
+version: 0.0.2
 # repository: https://github.com/my_org/my_repo
 
 environment:
@@ -8,6 +8,8 @@ environment:
 
 # Add regular dependencies here.
 dependencies:
+  hive: ^2.2.3
+  path: ^1.9.0
   args: ^2.4.2
   dart_pptx: ^0.1.3
   google_generative_ai: ^0.2.2
